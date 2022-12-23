@@ -30,3 +30,14 @@ Classes are attributes, which can be added to HTML elements.
 You can examine CSS attributes on the elements tab of the console.
 
 HTML elements can also have other attributes apart from classes, for example, id attributes, which JavaScript code can use to find an element.
+
+## Basic Page vs Page with Javascript
+![Basic Page](images/BasicPage.png)
+
+![Page with JavaScript](images/PageWithJavascript.png)
+
+## AJAX
+AJAX (Asynchronous JavaScript and XML) is a term that describes an approach that enables fetching content to web pages using JavaScript included within the HTML, without the need to rerender the page.
+
+## Single page app
+Single page applications (SPA) don't fetch all of their pages separately from the server, but instead comprise only one HTML page fetched from the server, the contents of which are manipulated with JavaScript that executes in the browser.

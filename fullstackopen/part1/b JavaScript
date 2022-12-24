@@ -133,3 +133,112 @@ const average = function(a, b) {
 
 const result = average(2, 5)
 ```
+
+## Object methods and "this"
+
+Arrow functions and functions defined using `function` vary substantially with how they behave with respect to the keyword `this`, which refers to the object itself.
+
+We can assign methods to an object by defining properties that are functions:
+```
+const arto = {
+  name: 'Arto Hellas',
+  age: 35,
+  education: 'PhD',
+  greet: function() {
+    console.log('hello, my name is ' + this.name)
+  },
+}
+
+arto.greet()  // "hello, my name is Arto Hellas" gets printed
+```
+
+Methods can be assigned to objects even after the creation of the object:
+```
+const arto = {
+  name: 'Arto Hellas',
+  age: 35,
+  education: 'PhD',
+  greet: function() {
+    console.log('hello, my name is ' + this.name)
+  },
+}
+
+arto.growOlder = function() {  this.age += 1}
+console.log(arto.age)   // 35 is printed
+arto.growOlder()
+console.log(arto.age)   // 36 is printed
+```
+
+Here is an example of storing a *method reference* in a variable outside of the object, and how `this` can cause problems:
+```
+const object = {
+    name: 'Object',
+    identify: function() {
+        console.log('My name is ' + this.name)
+    },
+    doAddition: function(a, b) {
+        console.log(a + b)
+    },
+}
+
+object.doAddition(1, 4) // prints 5
+const referenceDoAddition = object.doAddition
+referenceDoAddition(1, 4) // prints 5
+
+object.identify() // prints "My name is object"
+const referenceIdentify = object.identify()
+referenceIdentify() // prints "My name is undefined"
+```
+
+In the above example, the method reference for the identify function returns undefined for `this.name`. When calling the method through a reference, the method loses knowledge of what the original `this` was. JavaScript defines the value of `this` based on *how the method is called*. When calling the method through a reference, the value of `this` becomes the global object, instead of the object the function belongs to.
+
+Antoher situation that can cause this is when we set a timeout to call the method using the setTimeout function:
+`setTimeout(object.identify(), 1000)`
+This will print "My name is undefined" in 1000 ms, because the JavaScript engine will call the method, and at that point, `this` refers to the global object.
+
+One way to preserve the original `this` is by using a method called bind:
+`setTimeout(object.identify.bind(object), 1000)`
+Calling `object.identify.bind(object)` creates a new function where `this` is bound to point to object, independent of where and how the method is being called.
+
+Using arrow functions, it is possible to avoid some problems of `this`. However, you should not use them as methods for objects, because then `this` does not work at all.
+
+## Classes
+
+There is no class mechanism in JavaScript like the ones in object-oriented programming languages. However, there are features to make "simulating" object-oriented classes possible.
+
+The class syntax was introduced to JavaScripte in ES6, and substantially simplifies the definition of classes in JavaScript.
+```
+class Person {
+  constructor(name, age) {
+    this.name = name
+    this.age = age
+  }
+  greet() {
+    console.log('hello, my name is ' + this.name)
+  }
+}
+
+const adam = new Person('Adam Ondra', 29)
+adam.greet()
+
+const janja = new Person('Janja Garnbret', 23)
+janja.greet()
+```
+
+The classes and objects created are reminiscent of Java classes and objects. Their behavior is also similar to Java objects. At the core, they are still objects based on JavaScript's prototypal inheritance. The type of both objects is actually `Object`, since JavaScript essentially only defines the types Boolean, Null, Undefined, Number, String, Symbol, BigInt, and Object.
+
+ES6 class syntax is used a lot in old React and in Node.js, but is not as necessary when using React Hooks.
+
+## JavaScript materials
+
+For further reading of JavaScript:
+
+Mozilla's JavaScript Guide: https://developer.mozilla.org/en-US/docs/Web/JavaScript
+
+A re-introduction to JavaScript: https://developer.mozilla.org/en-US/docs/Web/JavaScript/A_re-introduction_to_JavaScript
+
+A free book series You-Dont-Know-JS: https://github.com/getify/You-Dont-Know-JS
+
+Javascript.info: https://javascript.info/
+
+Eloquent JavaScript: https://eloquentjavascript.net/

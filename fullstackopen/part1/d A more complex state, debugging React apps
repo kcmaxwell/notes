@@ -135,3 +135,116 @@ You can also access the debugger by adding breakpoints in the *Sources* tab. You
 You can also add the React developer tools extension to Chrome. It adds a new Components tab to the developer tools, which can be used to inspect different React elements in the application, along with their state and props.
 
 ## Rules of Hooks
+The `useState` function (as well as the `useEffect` function introduced later on) *must not be called* from inside of a loop, a conditional expression, or any place that is not a function defining a component. This must be done to ensure hooks are always called in the same order, and if this isn't the case, the application will behave erratically.
+
+## Function that returns a function
+Another way to define an event handler is to use a function that returns a function:
+```
+const App = () => {
+  const [value, setValue] = useState(10)
+
+  const hello = () => {    
+    const handler = () => console.log('hello world')    
+    return handler  
+  }
+
+  return (
+    <div>
+      {value}
+      <button onClick={hello()}>button</button>
+    </div>
+  )
+}
+```
+
+In the above code, the `onClick` event handler is set to the function call `hello()`. There is no problem because the function `hello` is returning a function defined inside of it, so the event handler still ends up being set to a function. 
+
+It is equivalent to `onClick={() => console.log('hello world')}`.
+
+Here is an example that shows a possible useful use case for this concept:
+```
+const App = () => {
+  const [value, setValue] = useState(10)
+
+  const hello = (who) => {    
+    const handler = () => {      
+        console.log('hello', who)    
+    }    
+    return handler  
+  }
+
+  return (
+    <div>
+      {value}
+      <button onClick={hello('world')}>button</button>      
+      <button onClick={hello('react')}>button</button>      
+      <button onClick={hello('function')}>button</button>    
+    </div>
+  )
+}
+```
+
+In the above example, each button gets its own individualized event handler by being able to pass arguments to the function returning the event handler function.
+
+A less verbose version of the `hello` function above would be:
+```
+const hello = (who) => () => {
+  console.log('hello', who)
+}
+```
+
+We can also use the same trick to define event handlers that set the state of the component to a given value:
+```
+const App = () => {
+  const [value, setValue] = useState(10)
+  
+  const setToValue = (newValue) => () => {    
+    console.log('value now', newValue)  // print the new value to console    
+    setValue(newValue)  
+  }  
+
+  return (
+    <div>
+      {value}
+      <button onClick={setToValue(1000)}>thousand</button>      
+      <button onClick={setToValue(0)}>reset</button>      
+      <button onClick={setToValue(value + 1)}>increment</button>    
+    </div>
+  )
+}
+```
+
+Choosing between the two presented ways of defining event handlers is mostly a matter of taste.
+
+## Passing Event Handlers to Child Components
+Here is an example of how to pass event handlers to a child component:
+```
+const Button = (props) => (
+  <button onClick={props.handleClick}>
+    {props.text}
+  </button>
+)
+
+const App = () => {
+    ...
+
+    return (
+        <div>
+            ...
+            <Button handleClick={() => setToValue(1000)} text="thousand" />
+        </div>
+    )
+}
+```
+
+You only need to make sure you use the correct attribute names when passing props to the component.
+
+## Do Not Define Components Within Components
+**Never define components inside of other components.** The method provides no benefits, and leads to many unpleasant problems. The biggest problems are due to the fact that React treats a component defined inside another as a new component in every render. This makes it impossible for React to optimize the component.
+
+## Further Reading for React
+Official React Documentation: https://reactjs.org/docs/hello-world.html
+
+Egghead.io Start learning React: https://egghead.io/courses/start-learning-react
+
+Egghead.io Beginner's Guide to React: https://egghead.io/courses/the-beginner-s-guide-to-reactjs

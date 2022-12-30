@@ -103,3 +103,20 @@ The data returned by the server is plain text. The axios library is still able t
 
 ## Effect-hooks
 The Effect Hook lets you perform side effects on function components. Data fetching, setting up a subscription, and manually changing the DOM in React components are all examples of side effects.
+
+To use an effect, we import `useEffect` from React, and then need to provide *two parameters* to the function. The first is a function, the effect itself. By default, effects run after every completed render, but you can choose to fire it only when certain values have changed.
+
+The second parameter of `useEffect` is used to specify how often the effect is run. If the second parameter is an empty array, then the effect is only run along with the first render of the component.
+
+Here is an example of `useEffect` with an empty array, so it will only run on the first render of the component:
+```
+useEffect(() => {
+  console.log('effect')
+  axios
+    .get('http://localhost:3001/notes')
+    .then(response => {
+      console.log('promise fulfilled')
+      setNotes(response.data)
+    })
+}, [])
+```

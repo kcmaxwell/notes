@@ -163,3 +163,94 @@ We do not need to display anything when there is a 404 in this case, because RES
 
 ## Deleting resources
 
+Here is an example route for deleting a resource using an HTTP DELETE request:
+```
+app.delete('/api/notes/:id', (request, response) => {
+  const id = Number(request.params.id)
+  notes = notes.filter(note => note.id !== id)
+
+  response.status(204).end()
+})
+```
+
+If deleting the resource is successful, meaning the resource exists and is removed, we respond to the request with the status code 204 No Content and return no data with the response.
+
+There is no consensus on what status code should be returned to a DELETE request if the resource does not exist. The only two options are 204 and 404. We will use 204 in both cases for simplicity.
+
+## Postman
+
+Postman is a tool that can be used to test your backend application.
+
+## Visual Studio Code REST Client
+
+The VS Code REST client plugin is an alternative to using Postman.
+
+To use it, we create a new *requests* folder in the root of the application, and add files with the *.rest* extension to send requests. For example, to get all notes, the file would contain:
+```
+GET http://localhost:3001/api/notes
+```
+
+If you then click the *Send Request* text just above the code, the REST client will execute the HTTP request and the response from the server will be opened in the editor.
+
+Here is an example of a POST request:
+```
+POST http://localhost:3001/api/notes HTTP/1.1
+content-type: application/json
+
+{
+    "content": "Testing 123",
+    "important": true
+}
+```
+
+You can add multiple requests in the same file using ### separators.
+
+## Receiving data
+
+To add resources, we need to make an HTTP POST request to the address containing the list of all of that type of resource. We also need to send the information in the request body in JSON format.
+
+For the backend to access that data easily, we will use the express json-parser, using the command `app.use(express.json())` to initialize it before using it.
+
+For example:
+```
+const express = require('express')
+const app = express()
+
+app.use(express.json())
+//...
+
+const generateId = () => {
+  const maxId = notes.length > 0
+    ? Math.max(...notes.map(n => n.id))
+    : 0
+  return maxId + 1
+}
+
+app.post('/api/notes', (request, response) => {
+  const body = request.body
+
+  if (!body.content) {
+    return response.status(400).json({ 
+      error: 'content missing' 
+    })
+  }
+
+  const note = {
+    content: body.content,
+    important: body.important || false,
+    date: new Date(),
+    id: generateId(),
+  }
+
+  notes = notes.concat(note)
+
+  response.json(note)
+})
+```
+
+The event handler function can access the data from the *body* property of the `request` object.
+
+Without the json-parser, the *body* property would be undefined. The json-parser functions so that it takes the JSON data of a request, transforms it into a JavaScript object, and then attaches it to the *body* property of the `request` object before the route handler is called.
+
+The post route above checks to make sure the *content* property exists, otherwise it will respond with the status code 400 Bad Request. If the *content* property has a value, the note will be based on the received data. Note that it generates a unique  ID for each new note, which is important for use in React. The date is also set by the server rather than the sending browser, since we can't trust that the browser has its clock set correctly.
+

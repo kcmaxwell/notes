@@ -254,3 +254,39 @@ Without the json-parser, the *body* property would be undefined. The json-parser
 
 The post route above checks to make sure the *content* property exists, otherwise it will respond with the status code 400 Bad Request. If the *content* property has a value, the note will be based on the received data. Note that it generates a unique  ID for each new note, which is important for use in React. The date is also set by the server rather than the sending browser, since we can't trust that the browser has its clock set correctly.
 
+## About HTTP Request Types
+
+The HTTP standard talks about two properties related to request types, **safety** and **idempotency**.
+
+The HTTP GET request should be safe, that is, it should not have the significance of taking an action other than retrieval. This means that the executing request must not cause any *side effects* on the server. The state of the database must not change, and the response must only return data that already exists on the server.
+
+HEAD should also be safe. In practice, it should work exactly like GET, but return only the status code and response headers.
+
+All HTTP requests except POST should be *idempotent*. This means that if a request does not generate side effects, the result should be the same regardless of how many times the request is sent.
+
+POST is the only HTTP request type that is neither *safe* nor *idempotent*.
+
+## Middleware
+
+Middleware are functions that can be used for handling `request` and `response` objects. The express json-parser used above is a middleware.
+
+For example, the json-parser takes the raw data from the requests that are stored in the `request` object, parses it into a JavaScript object, and assigns it to the `request` object as a new property *body*.
+
+In practice, you can use several middlewares at the same time. They will be executed one by one in the order they were taken into use in express.
+
+Middleware is a function that receives three parameters. For example:
+```
+const requestLogger = (request, response, next) => {
+  console.log('Method:', request.method)
+  console.log('Path:  ', request.path)
+  console.log('Body:  ', request.body)
+  console.log('---')
+  next()
+}
+```
+
+At the end of the function body, the `next` function that was passed as a parameter is called. The `next` function yields control to the next middleware.
+
+Middleware is taken into use like this: `app.use(requestLogger)`
+
+Middleware functions have to be taken into use before routes if we want them to be executed before the route event handlers are called. There are also situations where we want to define middleware functions after routes. This means that we are defining middleware functions that are only called if no route handles the HTTP request.

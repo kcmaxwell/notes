@@ -116,3 +116,74 @@ The objects are retrieved from the database with the find method of the `Note` m
 The search conditions adhere to the Mongo search query syntax. More info on that syntax can be found here:
 https://www.mongodb.com/docs/manual/reference/operator/
 
+## Connecting the backend to a database
+
+We don't want to return the mongo versioning field *__v* to the frontend. The frontend is also expecting an *id* field, not an *_id* field that mongo provides.
+
+One way to format the objects returned by Mongoose is to modify the `toJSON` method of the schema, which is used on all instances of the models produced with that schema:
+```
+noteSchema.set('toJSON', {
+  transform: (document, returnedObject) => {
+    returnedObject.id = returnedObject._id.toString()
+    delete returnedObject._id
+    delete returnedObject.__v
+  }
+})
+```
+
+Even though the *_id* property of Mongoose objects looks like a string, it is in factr an object. The `toJSON` method we defined transforms it into a string just to be safe. When we call something like `response.json(notes)` on objects returned by Mongo, the `toJSON` method of each object will be automatically called by the JSON.stringify method.
+
+## Database configuration into its own module
+
+Defining Node modules differs slightly from the way of defining ES6 modules used in part 2:
+```
+module.exports = mongoose.model('Note', noteSchema)
+```
+
+The public interface of the module is defined by setting a value to the `module.exports` variable. Above, we set the value to be the *Note* model. The other things defined inside of the module will not be accessible or visible to users of the module.
+
+To import the module if it is in the relative directory */models/note.js*, we do this:
+```
+const Note = require('./models/note')
+```
+
+We should not hardcode the address of the database into the code, so we will use a `MONGODB_URI` environment variable instead. We can do this using the dotenv library, installed using `npm install dotenv`.
+
+We create a *.env* file at the root of the project, and add our environment variables to it:
+```
+MONGODB_URI=mongodb+srv://fullstack:<password>@cluster0.o1opl.mongodb.net/noteApp?retryWrites=true&w=majority
+PORT=3001
+```
+
+**This .env file should be gitignored right away.**
+
+The environment variables defined in the *.env* file can be taken into use with the expression `require('dotenv').config()`, and you can reference them like normal environment variables, eg. `process.env.MONGODB_URI`.
+
+It's important that *dotenv* gets imported before the *note* model is imported. This ensures that the environment variables from the *.env* file are available globally before the code from the other modules is imported.
+
+Because GitHub is not used with Fly.io, the .env file gets sent to the Fly.io servers when the app is deployed. Because of this, the env variables defined in the file will be available there.
+
+A better option is to prevent .env from being copied to Fly.io by creating the file *.dockerignore* to the root directory, containing the line `.env`. You can then set the environment values like so:
+```
+fly secrets set MONGODB_URI='mongodb+srv://fullstack:<password>@cluster0.o1opl.mongodb.net/noteApp?retryWrites=true&w=majority'
+```
+
+## Using database in route handlers
+
+Using Mongoose's findById method, fetching an individual note gets changed into the following:
+```
+app.get('/api/notes/:id', (request, response) => {
+  Note.findById(request.params.id).then(note => {
+    response.json(note)
+  })
+})
+```
+
+## Verifying frontend and backend integration
+
+When the backend gets expanded, it's a good idea to test the backend first. Only once everything has been verified to work in the backend is it a good idea to test that the frontend works with the backend. It is highly inefficient to test things exclusively through the frontend.
+
+It's probably a good idea to integrate the frontend and backend one functionality at a time. First, we could implement fetching all notes from the database, test it through the backend endpoint in the browser, then verify that the frontend works with the new backend. Once everything seems to be working, we would move on to the next feature.
+
+Once we introduce a database into the mix, it is useful to inspect the state persisted in the database, eg. from the control panel in MongoDB Atlas. Often, small helper Node programs can be very helpful during development.
+

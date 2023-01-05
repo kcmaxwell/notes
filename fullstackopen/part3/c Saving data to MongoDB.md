@@ -187,3 +187,137 @@ It's probably a good idea to integrate the frontend and backend one functionalit
 
 Once we introduce a database into the mix, it is useful to inspect the state persisted in the database, eg. from the control panel in MongoDB Atlas. Often, small helper Node programs can be very helpful during development.
 
+## Error handling
+
+If we try to visit the URL of a note with an id that does not exist, then the response will be `null`.
+
+The following code will have the server respond with the HTTP status code 404 if the id doesn't exist. It also adds a `catch` block to handle cases where the promise returned by the `findById` method is *rejected*:
+```
+app.get('/api/notes/:id', (request, response) => {
+  Note.findById(request.params.id)
+    .then(note => {
+      if (note) {        
+        response.json(note)      
+        } else {        
+            response.status(404).end()      
+            }    
+        })
+    .catch(error => {      
+        console.log(error)
+        response.status(400).send({ error: 'malformatted id' })  
+    })
+})
+```
+
+If no matching object is found in the database, the value of `note` will be null, and the else block is executed. This results in a response with the status code *404 not found*. If a promise returned by `findById` is rejected, the response will have the status code *400*. If we try to fetch a note with the wrong kind of id, meaning an id that doesn't match the mongo identifier format, we receive an error, which will trigger the catch block and send the error "malformatted id".
+
+## Moving error handling into middleware
+
+There are cases where it is better to implement all error handling in a single place. This is particularly useful if we want to report data related to errors to an external error-tracking system like Sentry later on.
+
+Let's modify the code from above so that it passes the error forward with the `next` function. The next function is passed to the handler as the third parameter:
+```
+app.get('/api/notes/:id', (request, response, next) => {  
+  Note.findById(request.params.id)
+    .then(note => {
+      if (note) {
+        response.json(note)
+      } else {
+        response.status(404).end()
+      }
+    })
+    .catch(error => next(error))})
+```
+
+The error is given to the `next` function as a parameter. If `next` was called without a parameter, then the execution would simply move onto the next route or middleware. If the `next` function is called with a parameter, then the execution will continue to the *error handler middleware*.
+
+Express error handlers are middleware that are defined with a function that accepts *four parameters*. The error handler for the notes app looks like this:
+```
+const errorHandler = (error, request, response, next) => {
+  console.error(error.message)
+
+  if (error.name === 'CastError') {
+    return response.status(400).send({ error: 'malformatted id' })
+  } 
+
+  next(error)
+}
+
+// this has to be the last loaded middleware.
+app.use(errorHandler)
+```
+
+The error handler checks if the error is a *CastError* exception, in which case we know that the error was caused by an invalid object id for Mongo. In this situation, the error handler will send a response to the browser with the response object passed as a parameter. In all other error situations, the middleware passes the error forward to the default Express error handler.
+
+Note that the error-handling middleware has to be the **last loaded middleware.**
+
+## The order of middleware loading
+
+The execution order of middleware is the same as the order that they are loaded into express with the `app.use` function. For this reason, it is important to be careful when defining middleware.
+
+The correct order is the following:
+```
+app.use(express.static('build'))
+app.use(express.json())
+app.use(requestLogger)
+
+app.post('/api/notes', (request, response) => {
+  const body = request.body
+  // ...
+})
+
+const unknownEndpoint = (request, response) => {
+  response.status(404).send({ error: 'unknown endpoint' })
+}
+
+// handler of requests with unknown endpoint
+app.use(unknownEndpoint)
+
+const errorHandler = (error, request, response, next) => {
+  // ...
+}
+
+// handler of requests with result to errors
+app.use(errorHandler)
+```
+
+The json-parser middleware should be among the very first middleware loaded into Express, otherwise `request.body` will be undefined in route handlers.
+
+It's also important that the middleware for handling unsupported routes is next to the last middleware that is loaded into Express, just before the error handler, as no routes or middleware will be called after the *404 unknown endpoint* status. The only exception to this is the error handler, which needs to come at the very end.
+
+## Other operations
+
+The easiest way to delete a note from the database is with the findByIdAndRemove method:
+```
+app.delete('/api/notes/:id', (request, response, next) => {
+  Note.findByIdAndRemove(request.params.id)
+    .then(result => {
+      response.status(204).end()
+    })
+    .catch(error => next(error))
+})
+```
+
+In both successful cases of deleting a resource, the backend responds with the status code *204 no content*. The two different cases are deleting a note that exists, and deleting a note that does not exist in the database. The `result` callback parameter could be used for checking if a resource was actually deleted. Any exception that occurs is passed onto the error handler.
+
+PUT requests can be handled using the findByIdAndUpdate method:
+```
+app.put('/api/notes/:id', (request, response, next) => {
+  const body = request.body
+
+  const note = {
+    content: body.content,
+    important: body.important,
+  }
+
+  Note.findByIdAndUpdate(request.params.id, note, { new: true })
+    .then(updatedNote => {
+      response.json(updatedNote)
+    })
+    .catch(error => next(error))
+})
+```
+
+Notice that the `findByIdAndUpdate` method receives a regular JavaScript object as its parameter, and not a new note object created with the `Note` constructor function.
+
+There is one important detail regarding the use of the `findByIdAndUpdate` method. By default, the `updatedNote` parameter of the event handler receives the original document without the modifications. We added the optional `{ new: true }` parameter, which will cause our event handler to be called with the new modified document instead of the original.

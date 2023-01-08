@@ -6,7 +6,8 @@ We will now implement support for token-based authentication to the backend.
 
 The principles of token-based authentication are depicted in the following sequence diagram:
 ```mermaid
-    note left of user: user fills in login form with username and password
+    sequenceDiagram
+    Note left of user: user fills in login form with username and password
     user->>browser: login button pressed
     browser->>backend: HTTP POST /api/login { username, password }
     Note left of backend: backend generates TOKEN that identifies user

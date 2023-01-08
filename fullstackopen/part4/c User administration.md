@@ -178,3 +178,175 @@ Let's install the bcrypt package for generating the password hashes:
 npm install bcrypt
 ```
 
+Creating new users is done by making an HTTP POST request to the *users* path. Let's define a separate *router* for dealing with users in a new *controllers/users.js* file. We need to take the router into use in the *app.js* file, so that it handles requests made to the */api/users* file:
+```
+const usersRouter = require('./controllers/users')
+
+// ...
+
+app.use('/api/users', usersRouter)
+```
+
+The contents of *controlles/users.js* are as follows:
+```
+const bcrypt = require('bcrypt')
+const usersRouter = require('express').Router()
+const User = require('../models/user')
+
+usersRouter.post('/', async (request, response) => {
+  const { username, name, password } = request.body
+
+  const saltRounds = 10
+  const passwordHash = await bcrypt.hash(password, saltRounds)
+
+  const user = new User({
+    username,
+    name,
+    passwordHash,
+  })
+
+  const savedUser = await user.save()
+
+  response.status(201).json(savedUser)
+})
+
+module.exports = usersRouter
+```
+
+The password sent in the request is *not* stored in the database. We store the *hash* of the password that is generated with the `bcrypt.hash` function.
+
+An initial test for this route could look like this:
+```
+const bcrypt = require('bcrypt')
+const User = require('../models/user')
+
+//...
+
+describe('when there is initially one user in db', () => {
+  beforeEach(async () => {
+    await User.deleteMany({})
+
+    const passwordHash = await bcrypt.hash('sekret', 10)
+    const user = new User({ username: 'root', passwordHash })
+
+    await user.save()
+  })
+
+  test('creation succeeds with a fresh username', async () => {
+    const usersAtStart = await helper.usersInDb()
+
+    const newUser = {
+      username: 'mluukkai',
+      name: 'Matti Luukkainen',
+      password: 'salainen',
+    }
+
+    await api
+      .post('/api/users')
+      .send(newUser)
+      .expect(201)
+      .expect('Content-Type', /application\/json/)
+
+    const usersAtEnd = await helper.usersInDb()
+    expect(usersAtEnd).toHaveLength(usersAtStart.length + 1)
+
+    const usernames = usersAtEnd.map(u => u.username)
+    expect(usernames).toContain(newUser.username)
+  })
+})
+```
+
+The tests use the *usersInDb()* helper function that we implemented in the *tests/test_helper.js* file. The function is used to help verify the state of the database after a user is created:
+```
+const User = require('../models/user')
+
+// ...
+
+const usersInDb = async () => {
+  const users = await User.find({})
+  return users.map(u => u.toJSON())
+}
+
+module.exports = {
+  initialNotes,
+  nonExistingId,
+  notesInDb,
+  usersInDb,
+}
+```
+
+Mongoose does not have a built-in validator for checking the uniqueness of a field. We could use a ready-made solution like mongoose-unique-validator, but it currently does not work with Mongoose version 6.x, so we have to implement the uniqueness check by ourselves in the controller:
+```
+usersRouter.post('/', async (request, response) => {
+  const { username, name, password } = request.body
+
+  const existingUser = await User.findOne({ username })  if (existingUser) {    return response.status(400).json({      error: 'username must be unique'    })  }
+  const saltRounds = 10
+  const passwordHash = await bcrypt.hash(password, saltRounds)
+
+  const user = new User({
+    username,
+    name,
+    passwordHash,
+  })
+
+  const savedUser = await user.save()
+
+  response.status(201).json(savedUser)
+})
+```
+
+## Creating a new note with users
+
+We now have to update the code for creating a new note, to assign the user that created it. We will store the info about the user in the *userId* field of the request body:
+```
+const User = require('../models/user')
+//...
+
+notesRouter.post('/', async (request, response, next) => {
+  const body = request.body
+
+  const user = await User.findById(body.userId)
+  const note = new Note({
+    content: body.content,
+    important: body.important === undefined ? false : body.important,
+    date: new Date(),
+    user: user._id  })
+
+  const savedNote = await note.save()
+  user.notes = user.notes.concat(savedNote._id)  await user.save()  
+  response.json(savedNote)
+})
+```
+
+This also changes the *user* object. The *id* of the note is stored in the *notes* field.
+
+## Populate
+
+We would like our API to work such that when an HTTP Get request is made to the */api/users* route, the user objects would also contain the contents of the user's notes, and not just their id. In a relational database, this functionality would be implemented with a *join query*.
+
+Mongoose accomplishes the join by doing multiple queries, which is different from join queries in relational databases which are *transactional*, meaning that the state of the databse does not change during the time that the query is made. With join queries in Mongoose, nothing can guarantee that the state between the collections being joined is consistent, meaning that if we make a query that joins the user and notes collections, the state of the collections may change during the query.
+
+The Mongoose join is done with the populate method. Let's update the route that returns all users:
+```
+usersRouter.get('/', async (request, response) => {
+  const users = await User    
+    .find({}).populate('notes')
+
+  response.json(users)
+})
+```
+
+The populate method is chained after the *find* method making the initial query. The parameter given to the populate method defines that the *ids* referencing *note* objects in the *notes* field of the *user* document will be replaced by the referenced *note* documents.
+
+We can use the populate parameter for choosing the fields we want to include from the documents. The selection of fields is done with the Mongo syntax:
+```
+usersRouter.get('/', async (request, response) => {
+  const users = await User
+    .find({}).populate('notes', { content: 1, date: 1 })
+
+  response.json(users)
+});
+```
+
+It's important to understand that the database does not know that the ids stored in the *notes* field reference documents in the notes collection. The functionality of the *populate* method of Mongoose is based on the fact that we have defined "types" to the references in the Mongoose schema with the *ref* option.

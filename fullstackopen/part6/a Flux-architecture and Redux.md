@@ -387,3 +387,322 @@ console.log(first)     // prints 1
 console.log(second)   // prints 2
 console.log(rest)     // prints [3, 4, 5, 6]
 ```
+
+## Uncontrolled form
+
+Let's add the functionality for adding new notes and changing their importance:
+```
+const generateId = () =>
+  Number((Math.random() * 1000000).toFixed(0))
+
+const App = () => {
+  const addNote = (event) => {
+    event.preventDefault()
+    const content = event.target.note.value
+    event.target.note.value = ''
+    store.dispatch({
+      type: 'NEW_NOTE',
+      data: {
+        content,
+        important: false,
+        id: generateId()
+      }
+    })
+  }
+
+  const toggleImportance = (id) => {
+    store.dispatch({
+      type: 'TOGGLE_IMPORTANCE',
+      data: { id }
+    })
+  }
+
+  return (
+    <div>
+      <form onSubmit={addNote}>
+        <input name="note" /> 
+        <button type="submit">add</button>
+      </form>
+      <ul>
+        {store.getState().map(note =>
+          <li
+            key={note.id} 
+            onClick={() => toggleImportance(note.id)}
+          >
+            {note.content} <strong>{note.important ? 'important' : ''}</strong>
+          </li>
+        )}
+      </ul>
+    </div>
+  )
+}
+```
+
+The implementation of both functionalities is straightforward. It is noteworthy that we *have not* bound the state of the form fields to the state of the *App* component like we have previously done. React calls this kind of form uncontrolled.
+
+Uncontrolled forms have certain limitations (for example, dynamic error messages or disabling the submit button based on input are not possible). However, they are suitable for our current needs.
+
+The method handler for adding new notes is simple, it just dispatches the action for adding notes.
+
+We can get the content of the new note straight from the form field. Because the field has a name, we can access the content via the event object *event.target.note.value*.
+
+A note's importance can be changed by clicking its name. The event handler is very simple.
+
+## Action creators
+
+We begin to notice that, even in applications as simple as ours, using Redux can simplify the frontend code. However, we can do a lot better.
+
+React components don't need to know the Redux action types and forms. Let's separate creating actions into separate functions:
+```
+const createNote = (content) => {
+  return {
+    type: 'NEW_NOTE',
+    data: {
+      content,
+      important: false,
+      id: generateId()
+    }
+  }
+}
+
+const toggleImportanceOf = (id) => {
+  return {
+    type: 'TOGGLE_IMPORTANCE',
+    data: { id }
+  }
+}
+```
+
+Functions that create actions are called *action creators*.
+
+The *App* component does not have to know anything about the inner representation of the actions anymore, it just gets the right action by calling the creator function:
+```
+const App = () => {
+  const addNote = (event) => {
+    event.preventDefault()
+    const content = event.target.note.value
+    event.target.note.value = ''
+    store.dispatch(createNote(content))    
+  }
+  
+  const toggleImportance = (id) => {
+    store.dispatch(toggleImportanceOf(id))  }
+
+  // ...
+}
+```
+
+## Forwarding Redux Store to various components
+
+Aside from the reducer, our application is in one file. We should separate *App* into its own module.
+
+The question is, how can the *App* access the store after the move? More broadly, when a component is composed of many smaller components, there must be a way for all of the components to access the store. There are multiple ways to share the Redux store with components. First, we will look into the newest, and possibly the easiest way, using the *hooks* API of the *react-redux* library.
+
+First, we install react-redux: `npm install react-redux`
+
+Next, we move the *App* component into its own `App.js`. 
+
+`index.js` becomes:
+```
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+
+import App from './App'
+
+import { createStore } from 'redux'
+import { Provider } from 'react-redux'
+import noteReducer from './reducers/noteReducer'
+
+const store = createStore(noteReducer)
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <Provider store={store}>    
+    <App />
+  </Provider>)
+```
+
+Note that the application is now defined as a child of a *Provider* component provided by the react-redux library. The application's store is given to the Provider as its attribute *store*.
+
+Defining the action creators has been moved to the file *reducers/noteReducer.js* where the reducer is defined. That file looks like this:
+```
+const noteReducer = (state = [], action) => {
+  // ...
+}
+
+const generateId = () =>
+  Number((Math.random() * 1000000).toFixed(0))
+
+export const createNote = (content) => {  return {
+    type: 'NEW_NOTE',
+    data: {
+      content,
+      important: false,
+      id: generateId()
+    }
+  }
+}
+
+export const toggleImportanceOf = (id) => {  return {
+    type: 'TOGGLE_IMPORTANCE',
+    data: { id }
+  }
+}
+
+export default noteReducer
+```
+
+If the application has many components which need the store, the *App* component must pass *store* as props to all of those components.
+
+The module now has multiple `export` commands.
+
+The reducer function is still returned with the *export default* command, so the reducer can be imported the usual way:
+```
+import noteReducer from './reducers/noteReducer'
+```
+
+A module can have only *one default export*, but multiple "normal" exports.
+
+"Normal" (not as default) exported functions can be imported with the curly brace syntax:
+```
+import { createNote } from './../reducers/noteReducer'
+```
+
+This is the code for the *App* component:
+```
+import { createNote, toggleImportanceOf } from './reducers/noteReducer'
+import { useSelector, useDispatch } from 'react-redux'
+
+const App = () => {
+  const dispatch = useDispatch()  
+  const notes = useSelector(state => state)
+
+  const addNote = (event) => {
+    event.preventDefault()
+    const content = event.target.note.value
+    event.target.note.value = ''
+    dispatch(createNote(content))  
+  }
+
+  const toggleImportance = (id) => {
+    dispatch(toggleImportanceOf(id))  
+  }
+
+  return (
+    <div>
+      <form onSubmit={addNote}>
+        <input name="note" /> 
+        <button type="submit">add</button>
+      </form>
+      <ul>
+        {notes.map(note =>          
+          <li
+            key={note.id} 
+            onClick={() => toggleImportance(note.id)}
+          >
+            {note.content} <strong>{note.important ? 'important' : ''}</strong>
+          </li>
+        )}
+      </ul>
+    </div>
+  )
+}
+
+export default App
+```
+
+There are a few things to note in the code. Previously, the code dispatched actions by calling the dispatch method of the Redux store. Now, it does it with the *dispatch* function from the `useDispatch` hook.
+
+The *useDispatch* hook provides any React component access to the dispatch function of the Redux store defined in *index.js*. This allows all components to make changes to the state of the Redux store.
+
+The component can access the notes stored in the store with the *useSelector* hook of the react-redux library. *useSelector* receives a function as a parameter. The function either searches for or selects data from the Redux store. Here, we need all of the notes, so our selector function returns the whole state:
+```
+state => state
+```
+
+Usually, selector functions are a bit more interesting and return only selected parts of the contents of the Redux store. We could, for example, return only notes marked as important:
+```
+const importantNotes = useSelector(state => state.filter(note => note.important))  
+```
+
+## More components
+
+Let's separate creating a new note into a component:
+```
+import { useDispatch } from 'react-redux'import { createNote } from '../reducers/noteReducer'
+const NewNote = (props) => {
+  const dispatch = useDispatch()
+
+  const addNote = (event) => {
+    event.preventDefault()
+    const content = event.target.note.value
+    event.target.note.value = ''
+    dispatch(createNote(content))  
+  }
+
+  return (
+    <form onSubmit={addNote}>
+      <input name="note" />
+      <button type="submit">add</button>
+    </form>
+  )
+}
+
+export default NewNote
+```
+
+Unlike in the React code we did without Redux, the event handler for changing the state of the app (which now lives in Redux) has been moved away from the *App* to a child component. The logic for changing the state in Redux is still neatly separated from the whole React part of the application.
+
+We'll also separate the list of notes and displaying a single note into their own components, which will both be placed in the *Notes.js* file:
+```
+import { useDispatch, useSelector } from 'react-redux'
+import { toggleImportanceOf } from '../reducers/noteReducer'
+
+const Note = ({ note, handleClick }) => {
+  return(
+    <li onClick={handleClick}>
+      {note.content} 
+      <strong> {note.important ? 'important' : ''}</strong>
+    </li>
+  )
+}
+
+const Notes = () => {
+  const dispatch = useDispatch()  const notes = useSelector(state => state)
+  return(
+    <ul>
+      {notes.map(note =>
+        <Note
+          key={note.id}
+          note={note}
+          handleClick={() => 
+            dispatch(toggleImportanceOf(note.id))
+          }
+        />
+      )}
+    </ul>
+  )
+}
+
+export default Notes
+```
+
+The logic for changing the importance of a note is now in the component managing the list of notes.
+
+There is not much code left in *App*:
+```
+const App = () => {
+
+  return (
+    <div>
+      <NewNote />
+      <Notes />
+    </div>
+  )
+}
+```
+
+*Note*, responsible for rendering a single note, is very simple and is not aware that the event handler it gets as props dispatches an action. These kinds of components are called *presentational* in React terminology.
+
+*Notes*, on the other hand, is a *container* component, as it contains some application logic: it defines what the event handlers of the *Note* components do and coordinates the configuration of *presentational* components, that is, the *Notes*.
+
+We will return to the presentational/container division later in this part.

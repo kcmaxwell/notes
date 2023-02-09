@@ -577,3 +577,372 @@ It's possible to test the subscriptions with the Apollo Explorer. After entering
 
 ## Subscriptions on the client
 
+In order to use subscriptions in our React application, we have to do some changes, especially on its configuration. The configuration in *index.js* has to be modified like so:
+```
+import { 
+  ApolloClient, InMemoryCache, ApolloProvider, createHttpLink,
+  split
+} from '@apollo/client'
+import { setContext } from '@apollo/client/link/context'
+
+import { getMainDefinition } from '@apollo/client/utilities'
+import { GraphQLWsLink } from '@apollo/client/link/subscriptions'
+import { createClient } from 'graphql-ws'
+
+const authLink = setContext((_, { headers }) => {
+  const token = localStorage.getItem('phonenumbers-user-token')
+  return {
+    headers: {
+      ...headers,
+      authorization: token ? `Bearer ${token}` : null,
+    }
+  }
+})
+
+const httpLink = createHttpLink({ uri: 'http://localhost:4000' })
+
+const wsLink = new GraphQLWsLink(  
+  createClient({ url: 'ws://localhost:4000' })
+)
+const splitLink = split(
+  ({ query }) => {
+    const definition = getMainDefinition(query)
+    return (
+      definition.kind === 'OperationDefinition' &&
+      definition.operation === 'subscription'
+    )
+  },
+  wsLink,
+  authLink.concat(httpLink)
+)
+
+const client = new ApolloClient({
+  cache: new InMemoryCache(),
+  link: splitLink
+})
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <ApolloProvider client={client}>
+    <App />
+  </ApolloProvider>
+)
+```
+
+For this to work, we have to install a dependency:
+```
+npm install graphql-ws
+```
+
+The new configuration is due to the fact that the application must have an HTTP connection as well as a WebSocket connection to the GraphQL server.
+```
+const httpLink = createHttpLink({ uri: 'http://localhost:4000' })
+
+const wsLink = new GraphQLWsLink(
+  createClient({
+    url: 'ws://localhost:4000',
+  })
+)
+```
+
+The subscriptions are done using the useSubscription hook function.
+
+Let's make the following changes to the code. Add the code defining the order to the file *queries.js*:
+```
+export const PERSON_ADDED = gql`
+  subscription {
+    personAdded {
+      ...PersonDetails
+    }
+  }
+
+${PERSON_DETAILS}`
+```
+
+Then do the subscription in the App component:
+```
+import { useQuery, useMutation, useSubscription } from '@apollo/client'
+
+const App = () => {
+  // ...
+
+  useSubscription(PERSON_ADDED, {
+    onData: ({ data }) => {
+      console.log(data)
+    }
+  })
+
+  // ...
+}
+```
+
+When a new person is now added to the phonebook, no matter where it's done, the details of the new person are printed to the client's console.
+
+When a new person is addedl, the server sends a notification to the client, and the callback function defined in the `onData` attribute is called and given the details of the new person as parameters.
+
+Let's extend our solution so that when the details of a new person are received, the person is added to the Apollo cache, so it is rendered to the screen immediately.
+```
+const App = () => {
+  // ...
+
+  useSubscription(PERSON_ADDED, {
+    onData: ({ data }) => {
+      const addedPerson = data.data.personAdded
+      notify(`${addedPerson.name} added`)
+
+      client.cache.updateQuery({ query: ALL_PERSONS }, ({ allPersons }) => {
+        return {
+          allPersons: allPersons.concat(addedPerson),
+        }
+      })
+    }
+  })
+
+  // ...
+}
+```
+
+Our solution has a small problem: a person is added to the cache and also rendered twice since the component `PersonForm` is also adding it to the cache.
+
+Let us now fix the problem by ensuring that a person is not added twice in the cache:
+```
+// function that takes care of manipulating cache
+export const updateCache = (cache, query, addedPerson) => {
+  // helper that is used to eliminate saving same person twice
+  const uniqByName = (a) => {
+    let seen = new Set()
+    return a.filter((item) => {
+      let k = item.name
+      return seen.has(k) ? false : seen.add(k)
+    })
+  }
+
+  cache.updateQuery(query, ({ allPersons }) => {
+    return {
+      allPersons: uniqByName(allPersons.concat(addedPerson)),
+    }
+  })
+}
+
+const App = () => {
+  const result = useQuery(ALL_PERSONS)
+  const [errorMessage, setErrorMessage] = useState(null)
+  const [token, setToken] = useState(null)
+  const client = useApolloClient() 
+
+  useSubscription(PERSON_ADDED, {
+    onData: ({ data, client }) => {
+      const addedPerson = data.data.personAdded
+      notify(`${addedPerson.name} added`)
+      updateCache(client.cache, { query: ALL_PERSONS }, addedPerson)
+    },
+  })
+
+  // ...
+}
+```
+
+The function `updateCache` can also be used in `PersonForm` for the cache update:
+```
+import { updateCache } from '../App'
+
+const PersonForm = ({ setError }) => {
+  // ...
+
+  const [createPerson] = useMutation(CREATE_PERSON, {
+    onError: (error) => {
+      setError(error.graphQLErrors[0].message)
+    },
+    update: (cache, response) => {
+      updateCache(cache, { query: ALL_PERSONS }, response.data.addPerson)
+    },
+  })
+   
+  // ..
+} 
+```
+
+## n+1 problem
+
+First of all, you'll need to enable a debugging option via `mongoose` in your backend project directory, by adding a line of code as shown below:
+```
+mongoose.connect(MONGODB_URI)
+  .then(() => {
+    console.log('connected to MongoDB')
+  })
+  .catch((error) => {
+    console.log('error connection to MongoDB:', error.message)
+  })
+
+mongoose.set('debug', true);
+```
+
+Let's add some things to the backend. Let's modify the schema so that a *Person* type has a `friendOf` field, which tells whose friends list the person is on.
+```
+type Person {
+  name: String!
+  phone: String
+  address: Address!
+  friendOf: [User!]!
+  id: ID!
+}
+```
+
+The application should support the following query:
+```
+query {
+  findPerson(name: "Leevi Hellas") {
+    friendOf {
+      username
+    }
+  }
+}
+```
+
+Because `friendOf` is not a field of *Person* objects on the database, we have to create a resolver for it, which can solve this issue. Let's first create a resolver that returns an empty list:
+```
+Person: {
+  address: (root) => {
+    return { 
+      street: root.street,
+      city: root.city
+    }
+  },
+  friendOf: (root) => {
+    // return list of users
+    return [
+    ]
+  }
+},
+```
+
+The parameter `root` is the person object for which a friends list is being created, so we search from all `User` objects the ones which have root._id in their friends list:
+```
+  Person: {
+    // ...
+    friendOf: async (root) => {
+      const friends = await User.find({
+        friends: {
+          $in: [root._id]
+        } 
+      })
+
+      return friends
+    }
+  },
+```
+
+Now the application works.
+
+We can immediately do even more complicated queries. It is possible for example to find the friends of all users:
+```
+query {
+  allPersons {
+    name
+    friendOf {
+      username
+    }
+  }
+}
+```
+
+There is however one issue with our solution: it does an unreasonable amount of queries to the database. If we log every query to the database, just like this for example:
+```
+Query: {
+  allPersons: (root, args) => {    
+    console.log('Person.find')
+    if (!args.phone) {
+      return Person.find({})
+    }
+    return Person.find({ phone: { $exists: args.phone === 'YES' } })
+  }
+
+// ..
+
+},    
+
+// ..
+
+friendOf: async (root) => {
+  const friends = await User.find({ friends: { $in: [root._id] } })
+  console.log("User.find")  return friends
+},
+```
+
+If we assume we have 5 persons saved, and we query `allPersons` without `phone` as an argument, we see will see a large amount of queries like below:
+```
+Person.find
+User.find
+User.find
+User.find
+User.find
+User.find
+```
+
+So even though we primarily do one query for all persons, every person causes one more query in their resolver.
+
+This is a manifestation of the n+1 problem, which appears every once in a while in different contexts, and sometimes sneaks up on developers without them noticing.
+
+The right solution for the n+1 problem depends on the situation. Often, it requires using some kind of a join query instead of multiple separate queries.
+
+In our situation, the easiest solution would be to save whose friends list they are on each `Person` object:
+```
+const schema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+    minlength: 5
+  },
+  phone: {
+    type: String,
+    minlength: 5
+  },
+  street: {
+    type: String,
+    required: true,
+    minlength: 5
+  },  
+  city: {
+    type: String,
+    required: true,
+    minlength: 5
+  },
+  friendOf: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }
+  ],
+})
+```
+
+Then we could do a "join query", or populate the `friendOf` fields of persons when we fetch the `Person` objects:
+```
+Query: {
+  allPersons: (root, args) => {    
+    console.log('Person.find')
+    if (!args.phone) {
+      return Person.find({}).populate('friendOf')
+    }
+
+    return Person.find({ phone: { $exists: args.phone === 'YES' } })
+      .populate('friendOf')
+    },
+  // ...
+}
+```
+
+After the change, we would not need a separate resolver for the `friendOf` field.
+
+The allPersons query *does not cause* an n+1 problem, if we only fetch the name and the phone number.
+
+If we modify `allPersons` to do a join query because it sometimes causes an n+1 problem, it becomes heavier when we don't need the information on related persons. By using the fourth parameter of resolver functions, we could optimize the query even further. The fourth parameter can be used to inspect the query itself, so we could do the join query only in cases with a predicted threat of n+1 problems. However, we should not jump into this level of optimization before we are sure it's worth it.
+
+GraphQL Foundation's DataLoader library offers a good solution for the n+1 problem among other issues.
+
+## Epilogue
+
+The application we created in this part is not optimally structured. We did some cleanups, but much would still need to be done. Examples for better structuring of GraphQL applications can be found on the internet. Here are links to learn more about restructuring:
+Server: https://www.apollographql.com/blog/backend/schema-design/modularizing-your-graphql-schema-code/
+Client: https://medium.com/@peterpme/thoughts-on-structuring-your-apollo-queries-mutations-939ba4746cd8
+
+GraphQL is an older, but battle-tested technology, having been used by Facebook since 2012. Since they published GraphQL in 2015, it has slowly gotten more and more attention, and might in the near future threaten the dominance of REST. The death of REST has also already been predicted. Even though that will not happen quite yet, GraphQL is absolutely worth learning.

@@ -506,3 +506,185 @@ app.post('/calculate', (req, res) => {
 });
 ```
 
+To get this working, we must add an *export* to the function `calculator`:
+```
+export const calculator = (a: number, b: number, op: Operation) : number => {
+```
+
+When you hover over the `calculate` function, you can see the typing of the `calculator`, even though the code itself does not contain any typings. But if you hover over the values parsed from the request, an issue arises. All of the variables have the type `any`. It is not all that surprising, as no one has given them a type yet. There are a couple of ways to fix this, but first, we have to consider why this is accepted and where the type `any` came from.
+
+In TypeScript, every untyped variable whose type cannot be inferred implicitly becomes type `any`. Any is a kind of "wild card" type which stands for *whatever* type. Things become implicitly any type quite often when one forgets to type functions.
+
+We can also explicitly type things `any`. The only difference between the implicit and explicit any type is how the code looks; the compiler does not care about the difference.
+
+Programmers, however, see the code differently when `any` is explicitly enforced than when it is implicitly inferred. Implicit `any` typings are usually considered problematic, since it is quite often due to the coder forgetting to assign types (or being too lazy to do it), and it also means that the full power of TypeScript is not properly exploited.
+
+This is why the configuration rule noImplicitAny exists on the compiler level, and it is highly recommended to keep it on at all times. In the rare occasions when you truly cannot know what the type of a variable is, you should explicitly state that in the code:
+```
+const a : any = /* no clue what the type will be! */.
+```
+
+We already have *noImplicitAny: true* configured in our example, so why does the compiler not complain about the implicit `any` types? The reason is that the `body` field of an Express Request object is explicitly typed `any`. The same is true for the `request.query` field that Express uses for the query parameters.
+
+What if we would like to restrict developers from using the `any` type? Fortunately, we have methods other than *tsconfig.json* to enforce a coding style. What we can do is use *ESLint* to manage our code. Let's install ESLint and its TypeScript extensions:
+```
+npm install --save-dev eslint @typescript-eslint/eslint-plugin @typescript-eslint/parser
+```
+
+We will configure ESLint to disallow explicit any. Write the following rules to *.eslintrc*:
+```
+{
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "ecmaVersion": 11,
+    "sourceType": "module"
+  },
+  "plugins": ["@typescript-eslint"],
+  "rules": {
+    "@typescript-eslint/no-explicit-any": 2
+  }
+}
+```
+
+(Newer versions of ESLint have this rule on by default, so you don't necessarily need to add it separately.)
+
+Let us also set up a `lint` npm script to inspect the files with *.ts* extension by modifying the *package.json* file:
+```
+{
+  // ...
+  "scripts": {
+    "start": "ts-node index.ts",
+    "dev": "ts-node-dev index.ts",
+    "lint": "eslint --ext .ts ."
+    //  ...
+  },
+  // ...
+}
+```
+
+Now, ESLint will complain if we try to define a variable of type any.
+
+@typescript-eslint has a lot of TypeScript-specific ESLint rules, but you can also use all basic ESLint rules in TypeScript projects. For now, we should probably go with the recommended settings, and we will modify the rules as we go along whenever we find something we want to change the behavior of.
+
+On top of the recommended settings, we should try to get familiar with the coding style required in this part and *set the semicolon at the end of each line of code to required*.
+
+So we will use the following *.eslintrc*:
+```
+{
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended",
+    "plugin:@typescript-eslint/recommended-requiring-type-checking"
+  ],
+  "plugins": ["@typescript-eslint"],
+  "env": {
+    "node": true,
+    "es6": true
+  },
+  "rules": {
+    "@typescript-eslint/semi": ["error"],
+    "@typescript-eslint/explicit-function-return-type": "off",
+    "@typescript-eslint/explicit-module-boundary-types": "off",
+    "@typescript-eslint/restrict-template-expressions": "off",
+    "@typescript-eslint/restrict-plus-operands": "off",
+    "@typescript-eslint/no-unused-vars": [
+      "error",
+      { "argsIgnorePattern": "^_" }
+    ],
+    "no-case-declarations": "off"
+  },
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "project": "./tsconfig.json"
+  }
+}
+```
+
+We still have to solve the ESLint issues concerning the `any` type. We can disable some ESLint rules to get the data from the request body. Disabling `@typescript-eslint/no-unsafe-assignment` for the destructuring assignment and calling the Number constructor to values is nearly enough:
+```
+app.post('/calculate', (req, res) => {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  const { value1, value2, op } = req.body;
+
+  const result = calculator(Number(value1), Number(value2), op);
+  res.send({ result });
+});
+```
+
+However, this still leaves one problem to deal with, the last parameter in the function call is not safe, and is of type `any`.
+```
+app.post('/calculate', (req, res) => {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  const { value1, value2, op } = req.body;
+
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+  const result = calculator(Number(value1), Number(value2), op);
+  res.send({ result });
+});
+```
+
+We now stopped our ESLint errors, but we are totally at the mercy of the user. We need to do some validation to the post data and give a proper error message if the data is invalid:
+```
+app.post('/calculate', (req, res) => {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  const { value1, value2, op } = req.body;
+
+  if ( !value1 || isNaN(Number(value1)) ) {
+    return res.status(400).send({ error: '...'});
+  }
+
+  // more validations here...
+
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+  const result = calculator(Number(value1), Number(value2), op);
+  return res.send({ result });
+});
+```
+
+We shall see later on in this part some techniques for how the *any* typed data (e.g. the input an app receives from the user) can be *narrowed* to a more specific type (such as number). With a proper narrowing of types, there is no more need to silence the eslint rules.
+
+## Type assertion
+
+Using a type assertion is another "dirty trick" that can be done to keep the TypeScript compiler and ESLint quiet. Let us export the type Operation in *calculator.ts*:
+```
+export type Operation = 'multiply' | 'add' | 'divide';
+```
+
+Now, we can import the type and use a *type assertion* to tell the TypeScript compiler what type a variable has:
+```
+import { calculator, Operation } from './calculator'; // highligh-line
+
+app.post('/calculate', (req, res) => {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  const { value1, value2, op } = req.body;
+
+  // validate the data here
+
+  // assert the type
+  const operation = op as Operation;
+
+  const result = calculator(Number(value1), Number(value2), operation);
+
+  return res.send({ result });
+});
+```
+
+The defined constant `operation` has now the type `Operation` and the compiler is perfectly happy, and no ignoring of the ESLint rule is needed on the following function call. The new variable is actually not needed, the type assertion can be done when an argument is passed to the function:
+```
+app.post('/calculate', (req, res) => {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  const { value1, value2, op } = req.body;
+
+  // validate the data here
+
+  const result = calculator(
+    Number(value1), Number(value2), op as Operation
+  ); 
+
+  return res.send({ result });
+});
+```
+
+Using a type assertion (or ignoring an ESLint rule) is always a risky thing. It leaves the TypeScript compiler off the hook, as the compiler just trusts that we as developers know what we are doing. If the asserted type does *not* have the right kind of value, the result will be a runtime error, so one must be pretty careful when validating the data if a type assertion is used.
+
+In the next chapter, we shall have a look at type narrowing, which will provide a much more safe way of giving a stricter type for data that is coming from an external source.

@@ -623,3 +623,452 @@ router.post('/', (_req, res) => {
 
 export default router;
 ```
+
+## Preventing an accidental undefined result
+
+Let's extend the backend to support fetching one specific entry with an HTTP GET request to route `api/diaries/:id`.
+
+The DiaryService needs to be extended with a `findById` function:
+```
+// ...
+
+const findById = (id: number): DiaryEntry => {  
+  const entry = diaries.find(d => d.id === id);  
+  return entry;
+};
+
+export default {
+  getEntries,
+  getNonSensitiveEntries,
+  addDiary,
+  findById
+}
+```
+
+But once again, a new problem emerges. On the `return entry` line, `Type 'undefined' is not assignable to type 'DiaryEntry'.`
+
+The issue is that there is no guarantee that an enry with the specified id can be found. It is good that we are made aware of this potential problem already at compile phase. Without TypeScript, we would not be warned about this problem, and in the worst-case scenario, we could have ended up returning an `undefined` object instead of informing the user about the specified entry not being found.
+
+First of all, in cases like this, we need to decide what the *return value* should be if an object is not found, and how the case should be handled. The `find` method of an array returns `undefined` if the object is not found, and this is fine. We can solve our problem by typing the return value as follows:
+```
+const findById = (id: number): DiaryEntry | undefined => {
+  const entry = diaries.find(d => d.id === id);
+  return entry;
+}
+```
+
+The route handler is the following:
+```
+import express from 'express';
+import diaryService from '../services/diaryService'
+
+router.get('/:id', (req, res) => {
+  const diary = diaryService.findById(Number(req.params.id));
+
+  if (diary) {
+    res.send(diary);
+  } else {
+    res.sendStatus(404);
+  }
+});
+
+// ...
+
+export default router;
+```
+
+## Adding a new diary
+
+Let's start building the HTTP POST endpoint for adding new flight diary entries. The new entries should have the same type as the existing data.
+
+The code handling of the response looks as follows:
+```
+router.post('/', (req, res) => {
+  const { date, weather, visibility, comment } = req.body;
+  const addedEntry = diaryService.addDiary(
+    date,
+    weather,
+    visibility,
+    comment,
+  );
+  res.json(addedEntry);
+});
+```
+
+The corresponding method in `diaryService` looks like this:
+```
+import {
+  NonSensitiveDiaryEntry,
+  DiaryEntry,
+  Visibility,
+  Weather
+} from '../types';
+
+const addDiary = (
+    date: string, weather: Weather, visibility: Visibility, comment: string
+  ): DiaryEntry => {
+
+  const newDiaryEntry = {
+    id: Math.max(...diaries.map(d => d.id)) + 1,
+    date,
+    weather,
+    visibility,
+    comment,
+  };
+
+  diaries.push(newDiaryEntry);
+  return newDiaryEntry;
+};
+```
+
+As you can see, the `addDiary` function is becoming quite hard to read now that we have all the fields as separate parameters. It might be better to just send the data as an object to the function:
+```
+router.post('/', (req, res) => {
+  const { date, weather, visibility, comment } = req.body;
+  const addedEntry = diaryService.addDiary({
+    date,
+    weather,
+    visibility,
+    comment,
+  });
+  res.json(addedEntry);
+})
+```
+
+But wait, what is the type of this object? It is not exactly a `DiaryEntry`, since it is still missing the `id` field. It could be useful to create a new type, `NewDiaryEntry`, for an entry that hasn't been saved yet. Let's create that in *types.ts* using the existing `DiaryEntry` type and the Omit utility type:
+```
+export type NewDiaryEntry = Omit<DiaryEntry, 'id'>;
+```
+
+Now we can use the new type in our DiaryService, and destructure the new entry object when creating an entry to be saved:
+```
+import { NewDiaryEntry, NonSensitiveDiaryEntry, DiaryEntry } from '../types';
+
+// ...
+
+const addDiary = ( entry: NewDiaryEntry ): DiaryEntry => {
+  const newDiaryEntry = {
+    id: Math.max(...diaries.map(d => d.id)) + 1,
+    ...entry
+  };
+
+  diaries.push(newDiaryEntry);
+  return newDiaryEntry;
+};
+```
+
+Now the code looks much cleaner!
+
+There is still a complaint from our code. When destructuring the values from *req.body* in the router, we get the ESLint error `Unsafe assignment of an any value.`
+
+The cause is the ESLint rule @typescript-eslint/no-unsafe-assignment that prevents us from assigning the fields of a request body to variables.
+
+For the time being, we will just ignore the ESLint rule from the whole file by adding the following as the first line of the file:
+```
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+```
+
+To parse the incoming data, we must have the `json` middleware configured:
+```
+import express from 'express';
+import diaryRouter from './routes/diaries';
+const app = express();
+app.use(express.json());
+
+const PORT = 3000;
+
+app.use('/api/diaries', diaryRouter);
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+```
+
+Now the application is ready to receive HTTP POST requests for new diary entries of the correct type!
+
+## Proofing requests
+
+There are plenty of things that can go wrong when we accept data from outside sources. Applications rarely work completely on their own, and we are forced to live with the fact that data from sources outside of our system cannot be fully trusted. When we receive data from an outside source, there is no way it can already be typed when we receive it. We need to make decisions on how to handle the uncertainty that comes with this.
+
+The disabled ESLint rule was hinting to us that the following assignment is risky:
+```
+const newDiaryEntry = diaryService.addDiary({
+  date,
+  weather,
+  visibility,
+  comment,
+});
+```
+
+We would like to have the assurance that the object in a POST request has the correct type. Let us now define a function `toNewDiaryEntry` that receives the request body as a parameter and returns a properly-typed `NewDiaryEntry` object. The function shall be defined in the file *utils.ts*.
+
+The route definition uses the function as follows:
+```
+import toNewDiaryEntry from '../utils';
+
+// ...
+
+router.post('/', (req, res) => {
+  try {
+    const newDiaryEntry = toNewDiaryEntry(req.body);
+
+    const addedEntry = diaryService.addDiary(newDiaryEntry);
+    res.json(addedEntry);
+  } catch (error: unknown) {
+    let errorMessage = 'Something went wrong.';
+    if (error instanceof Error) {
+      errorMessage += ' Error: ' + error.message;
+    }
+    res.status(400).send(errorMessage);
+  }
+})
+```
+
+We can now also remove the first line that ignores the ESLint rule `no-unsafe-assignment`.
+
+Since we are now writing secure code and trying to ensure that we are getting exactly the data we want from the requests, we should get started with parsing and validating each field we are expecting to receive.
+
+The skeleton of the function `toNewDiaryEntry` looks like the following:
+```
+import { NewDiaryEntry } from './types';
+
+const toNewDiaryEntry = (object): NewDiaryEntry => {
+  const newEntry: NewDiaryEntry = {
+    // ...
+  };
+
+  return newEntry;
+};
+
+export default toNewDiaryEntry;
+```
+
+The function should parse each field and make sure that the return value is exactly of type `NewDiaryEntry`. This means we should check each field separately.
+
+Once again, we have a type issue: what is the type of the parameter `object`? Since the `object` is the body of a request, Express has typed it as `any`. Since the idea of this function is to map fields of unknown type to fields of the correct type and check whether they are defined as expected, this might be the rare case where we *want to allow the `any` type*.
+
+However, if we type the object as `any`, ESLint complains about that. We could ignore the lint rule, but a better idea is to follow one of the advices the editor gives us in the *Quick Fix* and set the parameter type to `unknown`:
+```
+import { NewDiaryEntry } from './types';
+
+const toNewDiaryEntry = (object: unknown): NewDiaryEntry => {
+  const newEntry: NewDiaryEntry = {
+    // ...
+  }
+
+  return newEntry;
+}
+
+export default toNewDiaryEntry;
+```
+
+`unknown` is the ideal type for our kind of situation of input validation, since we don't yet need to define the type to match `any` type, but can first verify the type and then confirm the expected type. With the use of `unknown`, we also don't need to worry about the `@typescript-eslint/no-explicit-any` ESLint rule, since we are not using `any`. However, we might still need to use `any` in some cases where we are not yet sure about the type and need to access properties of an `any` object to validate or type-check the property values themselves.
+
+## Type guards
+
+Let us start creating the parsers for each of the fields of `object`.
+
+To validate the `comment` field, we need to check that it exists, and to ensure that it is of the type `string`.
+
+The function should look something like this:
+```
+const parseComment = (comment: unknown): string => {
+  if (!comment || !isString(comment)) {
+    throw new Error('Incorrect or missing comment');
+  }
+
+  return comment;
+};
+```
+
+The function gets a parameter of type `unknown` and returns it as type `string` if it exists and is of the right type.
+
+The string validation function looks like this:
+```
+const isString = (text: unknown): text is string => {
+  return typeof text === 'string' || text instanceof String;
+};
+```
+
+The function is a so-called type guard. This means it is a function that returns a boolean *and* has a *type predicate* as the return type. In our case, the type predicate is: `text is string`.
+
+The general form of a type predicate is `parameterName is Type` where the `parameterName` is the name of the function parameter and `Type` is the targeted type.
+
+If the type guard function returns true, the TypeScript compiler knows that the tested variable has the type that was defined in the type predicate.
+
+Before the type guard is called, the actual type of the variable `comment` is not known. But after the call, if the code proceeds past the exception (that is, the type guard returned true), then the compiler knows that `comment` is of type `string`.
+
+The use of a type guard that returns a type predicate is one way to do type narrowing, that is, to give a variable a more strict type or accurate type. As we will soon see there are also other kinds of type guards available.
+
+Next, let's consider the `date` field. Parsing and validating the date object is pretty similar to what we did with comments. Since TypeScript doesn't know a type for a date, we need to treat it as a `string`. We should however still use JavaScript-level validation to check whether the date format is acceptable.
+
+We will add the following functions:
+```
+const isDate = (date: string): boolean => {
+  return Boolean(Date.parse(date));
+};
+
+const parseDate = (date: unknown): string => {
+  if (!date || !isString(date) || !isDate(date)) {
+      throw new Error('Incorrect or missing date: ' + date);
+  }
+  return date;
+};
+```
+
+The code is nothing special. The only thing is that we can't use a type predicate-based type guard here, since a date in this case is only considered to be a `string`. Note that even though the `parseDate` function accepts the `date` variable as `unknown` after we check the type with `isString`, then its type is set as `string`, which is why we can give the variable to the `isDate` function requiring a string without any problems.
+
+Finally, we are ready to move on to the last two types, `Weather` and `Visibility`.
+
+We would like the validation and parsing to work as follows:
+```
+const parseWeather = (weather: unknown): Weather => {
+  if (!weather || !isString(weather) || !isWeather(weather)) {
+      throw new Error('Incorrect or missing weather: ' + weather);
+  }
+  return weather;
+};
+```
+
+The question is: how can we validate that the string is of a specific form? One possible way to write the type guard would be this:
+```
+const isWeather = (str: string): str is Weather => {
+  return ['sunny', 'rainy', 'cloudy', 'stormy'].includes(str);
+};
+```
+
+This would work just fine, but the problem is that the list of possible values for Weather does not necessarily stay in sync with the type definitions if the type is altered. This is most certainly not good, since we would like to have just one source for all possible weather types.
+
+## Enum
+
+In our case, a better solution would be to improve the actual `Weather` type. Instead of a type alias, we should use the TypeScript enum, which allows us to use the actual values in our code at runtime, not only in the compilation phase.
+
+Let us redefine the type `Weather` as follows:
+```
+export enum Weather {
+  Sunny = 'sunny',
+  Rainy = 'rainy',
+  Cloudy = 'cloudy',
+  Stormy = 'stormy',
+  Windy = 'windy',
+}
+```
+
+Now we can check that a string is one of the accepted values, and the type guard can be written like this:
+```
+const isWeather = (param: string): param is Weather => {
+  return Object.values(Weather).map(v => v.toString()).includes(param);
+};
+```
+
+Note that we need to take the string representation of the enum values for the comparison, that is why we do the mapping.
+
+One issue arises after these changes. Our data in file *data/entries.ts* does not conform to our types anymore. This is because we cannot just assume a string is an enum.
+
+We can fix this by mapping the initial data elements to the `DiaryEntry` type with the `toNewDiaryEntry` function:
+```
+import { DiaryEntry } from "../src/types";
+import toNewDiaryEntry from "../src/utils";
+
+const data = [
+  {
+      "id": 1,
+      "date": "2017-01-01",
+      "weather": "rainy",
+      "visibility": "poor",
+      "comment": "Pretty scary flight, I'm glad I'm alive"
+  },
+  // ...
+]
+
+const diaryEntries: DiaryEntry [] = data.map(obj => {
+  const object = toNewDiaryEntry(obj) as DiaryEntry;
+  object.id = obj.id;
+  return object;
+});
+
+export default diaryEntries;
+```
+
+Note that since `toNewDiaryEntry` returns an object of type `NewDiaryEntry`, we need to assert it to be `DiaryEntry` with the `as` operator.
+
+Enums are typically used when there is a set of predetermined values that are not expected to change in the future. Usually, enums are used for much tighter unchanging values (for example, weekdays, months, cardinal directions), but since they offer us a great way to validate our incoming values, we might as well use them in our case.
+
+We still need to give the same treatment to `Visibility`. The enum looks as follows:
+```
+export enum Visibility {
+  Great = 'great',
+  Good = 'good',
+  Ok = 'ok',
+  Poor = 'poor',
+}
+```
+
+The type guard and the parser are below:
+```
+const isVisibility = (param: string): param is Visibility => {
+  return Object.values(Visibility).map(v => v.toString()).includes(param);
+};
+
+const parseVisibility = (visibility: unknown): Visibility => {
+  if (!visibility || !isString(visibility) || !isVisibility(visibility)) {
+      throw new Error('Incorrect or missing visibility: ' + visibility);
+  }
+  return visibility;
+};
+```
+
+And finally, we can finalize the `toNewDiaryEntry` function that takes care of validating and parsing the fields of the POST body. There is however one more thing to take care of. If we try to access the fields of the parameter `object` as follows:
+```
+const toNewDiaryEntry = (object: unknown): NewDiaryEntry => {
+  const newEntry: NewDiaryEntry = {
+    comment: parseComment(object.comment),
+    date: parseDate(object.date),
+    weather: parseWeather(object.weather),
+    visibility: parseVisibility(object.visibility)
+  };
+
+  return newEntry;
+};
+```
+
+We notice that the code does not compile. This is because the unknown type does not allow any operations, so accessing the fields is not possible.
+
+We can again fix the problem by type narrowing. We have now two type guards, the first checks that the parameter object exists and it has the type *object*. After this, the second type guard uses the in operator to ensure that the object has all the desired fields:
+```
+const toNewDiaryEntry = (object: unknown): NewDiaryEntry => {
+  if ( !object || typeof object !== 'object' ) {
+    throw new Error('Incorrect or missing data');
+  }
+
+  if ('comment' in object && 'date' in object && 'weather' in object && 'visibility' in object)  {
+    const newEntry: NewDiaryEntry = {
+      weather: parseWeather(object.weather),
+      visibility: parseVisibility(object.visibility),
+      date: parseDate(object.date),
+      comment: parseComment(object.comment)
+    };
+  
+    return newEntry;
+  }
+
+  throw new Error('Incorrect data: some fields are missing');
+};
+```
+
+If the guard does not evaluate to true, an exception is thrown.
+
+The use of operator `in` actually now guarantees that the fields indeed exist in the object. Because of that, the existence check in parsers is no longer needed:
+```
+const parseVisibility = (visibility: unknown): Visibility => {
+  // check !visibility removed:
+  if (!isString(visibility) || !isVisibility(visibility)) {
+      throw new Error('Incorrect visibility: ' + visibility);
+  }
+  return visibility;
+};
+```
+
+If a field, e.g. `comment` would be optional, the type narrowing should take that into account, and the operator in could not be used as we did here, since the `in` test requires the field to be present.
+
+If we now try to create a new diary entry with invalid or missing fields, we are getting an appropriate error message.

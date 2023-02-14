@@ -349,3 +349,330 @@ default:
   return assertNever(part);
 ```
 and remove the case that handles the type `CoursePartBackground`, we would see the following error: `Argument of type 'CoursePartBackground' is not assignable to parameter of type 'never'.` This tells us that we are using a variable somewhere where it should never be used. This tells us that something needs to be fixed.
+
+## React app with state
+
+So far, we have only looked at an application that keeps all the data in a typed variable but does not have any state. Let us once more go back to the note app, and build a typed version of it.
+
+We start with the following code:
+```
+import { useState } from 'react';
+
+const App = () => {
+  const [newNote, setNewNote] = useState('');
+  const [notes, setNotes] = useState([]);
+
+  return null
+}
+```
+
+When we hover over the `useState` calls in the editor, we notice a couple of interesting things. The type of the first call `useState('')` looks like the following:
+```
+useState<string>(initialState: string | (() => string)): 
+  [string, React.Dispatch<React.SetStateAction<string>>] 
+```
+
+The TypeScript compiler has inferred that the intial state is either a string or a function that returns a string. The type of the first element in the returned array is a string, and the second element, which we set `setNewNote` to, has a slightly more complex type. It is the type of a function that sets a valued data.
+
+When we look at the second useState with the initial value `[]`, the type looks quite different:
+```
+useState<never[]>(initialState: never[] | (() => never[])): 
+  [never[], React.Dispatch<React.SetStateAction<never[]>>] 
+```
+
+TypeScript can just infer that the state has type `never[]`. It is an array, but it has no clue what the elements are that are stored in it, so we need to help the compiler and provide the type explicitly.
+
+One of the best sources for information about typing React is the React TypeScript cheatsheet:
+https://react-typescript-cheatsheet.netlify.app/
+
+The chapter about useState hook instructs to use a *type parameter* in situations where the compiler cannot infer the type.
+
+Let us now define a type for notes:
+```
+interface Note {
+  id: number,
+  content: string
+}
+```
+
+The solution is now simple:
+```
+const [notes, setNotes] = useState<Note[]>([]);
+```
+
+In technical terms, useState is a generic function, where the type has to be specified as a type parameter in those cases when the compiler cannot infer the type.
+
+Rendering the notes is now easy. Let us just add some data to the state so that we can see that the code works:
+```
+interface Note {
+  id: number,
+  content: string
+}
+
+import { useState } from "react";
+
+const App = () => {
+  const [notes, setNotes] = useState<Note[]>([
+    { id: 1, content: 'testing' }
+  ]);
+  const [newNote, setNewNote] = useState('');
+
+  return (
+    <div>
+      <ul>
+        {notes.map(note =>
+          <li key={note.id}>{note.content}</li>
+        )}
+      </ul>
+    </div>
+  )
+}
+```
+
+The next task is to add a form that makes it possible to create new notes:
+```
+const App = () => {
+  const [notes, setNotes] = useState<Note[]>([
+    { id: 1, content: 'testing' }
+  ]);
+  const [newNote, setNewNote] = useState('');
+
+  return (
+    <div>
+      <form>
+        <input
+          value={newNote}
+          onChange={(event) => setNewNote(event.target.value)}
+        />
+        <button type='submit'>add</button>
+      </form>
+      <ul>
+        {notes.map(note =>
+          <li key={note.id}>{note.content}</li>
+        )}
+      </ul>
+    </div>
+  )
+}
+```
+
+When we hover over the `event.target.value`, we see that it is indeed a string, just what is the expected parameter of the `setNewNote`.
+
+We still need the event handler for adding the new note. Let us try the following:
+```
+const App = () => {
+  // ...
+
+  const noteCreation = (event) => {
+    event.preventDefault()
+    // ...
+  };
+
+  return (
+    <div>
+      <form onSubmit={noteCreation}>
+        <input
+          value={newNote}
+          onChange={(event) => setNewNote(event.target.value)} 
+        />
+        <button type='submit'>add</button>
+      </form>
+      // ...
+    </div>
+  )
+}
+```
+
+It does not quite work, there is an ESLint error complaining about implicit any on the `event` parameter of the `noteCreation` function.
+
+The React TypeScript cheatsheet comes to the rescue again. The chapter about forms and events reveals that the right type of event handler is `React.SyntheticEvent`.
+
+The code becomes:
+```
+interface Note {
+  id: number,
+  content: string
+}
+
+const App = () => {
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [newNote, setNewNote] = useState('');
+
+  const noteCreation = (event: React.SyntheticEvent) => {
+    event.preventDefault()
+    const noteToAdd = {
+      content: newNote,
+      id: notes.length + 1
+    }
+    setNotes(notes.concat(noteToAdd));
+    setNewNote('')
+  };
+
+  return (
+    <div>
+      <form onSubmit={noteCreation}>
+        <input value={newNote} onChange={(event) => setNewNote(event.target.value)} />
+        <button type='submit'>add</button>
+      </form>
+      <ul>
+        {notes.map(note =>
+          <li key={note.id}>{note.content}</li>
+        )}
+      </ul>
+    </div>
+  )
+}
+```
+
+## Communicating with the server
+
+Let us modify the app so that the notes are saved in a JSON server backend at the url http://localhost:3001/notes.
+
+As usual, we will use Axios and the useEffect hook to fetch the initial state from the server.
+
+Let us try the following:
+```
+const App = () => {
+  // ...
+  useEffect(() => {
+    axios.get('http://localhost:3001/notes').then(response => {
+      console.log(response.data);
+    })
+  }, [])
+  // ...
+}
+```
+
+When we hover over the `response.data`, we see that it has the type `any`.
+
+To set the data to the state with function `setNotes`, we must type it properly:
+```
+useEffect(() => {
+  axios.get<Note[]>('http://localhost:3001/notes').then(response => {
+    console.log(response.data);
+  })
+}, [])
+```
+
+We can now set the data in the state `notes` to get the code working:
+```
+  useEffect(() => {
+    axios.get<Note[]>('http://localhost:3001/notes').then(response => {
+      setNotes(response.data)
+    })
+  }, [])
+```
+
+Just like with `useState`, we gave a type parameter to `axios.get` to instruct it how the typing should be done. Just like `useState`, `axios.get` is also a generic function. Unlike some generic functions, the type parameter of `axios.get` has a default value `any`, so if the function is used without defining the type parameter, the type of the response data will be `any`.
+
+The code works, and the compiler and ESLint give no errors. However, giving a type parameter to `axios.get` is a potentailly dangerous thing to do. The request body can contain data in an arbitrary form, and when giving a type parameter, we are essentially just telling the TypeScript compiler to trust us that the data has type `Note[]`. It is essentially as safe as if we used a type assertion on the `response.data` in the body of the callback.
+
+Since the TypeScript types do not even exist in runtime, our code does not give us any "safety" against situations where the request body contains data in a wrong form.
+
+Giving a type variable to `axios.get` might be ok if we are *absolutely sure* that the backend behaves correctly and returns the data in the correct form. If we want to build a robust system, we should prepare for surprises and parse the response data in the frontend similar to what we did in the previous section for the requests to the backend.
+
+Let us implement the new note addition:
+```
+  const noteCreation = (event: React.SyntheticEvent) => {
+    event.preventDefault()
+    axios.post<Note>('http://localhost:3001/notes', { content: newNote })
+      .then(response => {
+        setNotes(notes.concat(response.data))
+      })
+
+    setNewNote('')
+  };
+```
+
+We are again giving `axios.post` a type parameter. We know that the server response is the added note, so the proper type parameter is `Note`.
+
+Let us clean up the code a bit. For the type definitions, we create a file `types.ts` with the following content:
+```
+export interface Note {
+  id: number,
+  content: string
+}
+
+export type NewNote = Omit<Note, 'id'>
+```
+
+We have added a new type for a *new note*, one that does not yet have the `id` field assigned.
+
+The code that communicates with the backend is also extracted to a module in the file `noteService.tsx`.
+```
+import axios from 'axios';
+import { Note, NewNote } from "./types";
+
+const baseUrl = 'http://localhost:3001/notes'
+
+export const getAllNotes = () => {
+  return axios
+    .get<Note[]>(baseUrl)
+    .then(response => response.data)
+}
+
+export const createNote = (object: NewNote) => {
+  return axios
+    .post<Note>(baseUrl, object)
+    .then(response => response.data)
+}
+```
+
+The component `App` is now much cleaner:
+```
+import { useState, useEffect } from "react";
+import { Note } from "./types";
+import { getAllNotes, createNote } from './noteService';
+
+const App = () => {
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [newNote, setNewNote] = useState('');
+
+  useEffect(() => {
+    getAllNotes().then(data => {
+      setNotes(data)
+    })
+  }, [])
+
+  const noteCreation = (event: React.SyntheticEvent) => {
+    event.preventDefault()
+    createNote({ content: newNote }).then(data => {
+      setNotes(notes.concat(data))
+    })
+
+    setNewNote('')
+  };
+
+  return (
+    // ...
+  )
+}
+```
+
+## A note about defining object types
+
+We have used interfaces to define object types, e.g. diary entries, in the previous section, and in the course part of this section.
+```
+interface DiaryEntry {
+  id: number;
+  date: string;
+  weather: Weather;
+  visibility: Visibility;
+  comment?: string;
+} 
+```
+
+We actually could have had the same effect by using a type alias:
+```
+type DiaryEntry = {
+  id: number;
+  date: string;
+  weather: Weather;
+  visibility: Visibility;
+  comment?: string;
+} 
+```
+
+In most cases, you can use either `type` or `interface`, whichever syntax you prefer. However, there are a few things to keep in mind. For example, if you define multiple interfaces with the same name, they will result in a merged interface, whereas if you try to define multiple types with the same name, it will result in an error stating that a type with the same name is already declared.
+
+TypeScript documentation recommends using interfaces in most cases.

@@ -68,3 +68,66 @@ In addition to emulators, there is one extremely useful way to develop React Nat
 
 When the Expo mobile app has finished installing, open it up. Next, if the Expo development tools are not already running, start them by running `npm start`. You should be able to see a QR code at the beginning of the command output. Open the app by scanning the QR code, in Android with Expo app, or in iOS with the Camera app. The Expo mobile app should start building the JavaScript bundle and after it is finished, you should be able to see your application. Now, every time you want to reopen your application in the Expo mobile app, you should be able to access the application without scanning the QR code by pressing it in the *Recently opened* list in the *Projects* view.
 
+## ESLint
+
+Now that we are somewhat familiar with the development environment, let's enhance our development experience even further by configuring a linter. We will be using ESLint, which is already familiar to us. Let's get started by installing the dependencies:
+```
+npm install --save-dev eslint @babel/eslint-parser eslint-plugin-react eslint-plugin-react-native
+```
+
+Next, let's add the ESLint configuration into a *.eslintrc* file in the *rate-repository-app* directory with the following content:
+```
+{
+  "plugins": ["react", "react-native"],
+  "settings": {
+    "react": {
+      "version": "detect"
+    }
+  },
+  "extends": ["eslint:recommended", "plugin:react/recommended"],
+  "parser": "@babel/eslint-parser",
+  "env": {
+    "react-native/react-native": true
+  },
+  "rules": {
+    "react/prop-types": "off",
+    "react/react-in-jsx-scope": "off"
+  }
+}
+```
+
+And finally, let's add a `lint` script to the *package.json* file to check the linting rules in specific files:
+```
+{
+  // ...
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "lint": "eslint ./src/**/*.{js,jsx} App.js --no-error-on-unmatched-pattern"
+  },
+  // ...
+}
+```
+
+Now we can check that the linting rules are obeyed in JavaScript files in the *src* directory and in the *App.js* file by running `npm run lint`. We will be adding our future code to the *src* directory, but because we haven't added any files there yet, we need the `no-error-on-unmatched-pattern` flag.
+
+The provided ESLint configuration contains only the basis for the configuration. Feel free to improve the configuration and add new plugins if you feel like it.
+
+## Debugging
+
+When our application doesn't work as intended, we should immediately start *debugging* it. In practice, this means that we'll need to reproduce the erroneous behavior and monitor the code execution to find out which part of the code behaves incorrectly. During the course, we have already done a bunch of debugging by logging messages, inspecting network traffic, and using specific development tools, such as *React Development Tools.* In general, debugging isn't that different in React Native, we just need the right tools for the job.
+
+`console.log` messages appear in the Expo development tools command line.
+
+Sometimes, though, we need more. React Native Debugger is a tool that offers a similar set of debugging features as the browser's developer tools. Let's get started by installing React Native Debugger with the help of the installation instructions. Once the installation is complete, start the React Native Debugger, open a new debugger window (shortcut: `Ctrl+T` on Linux/Windows) and set the React Native packager port to `19000`.
+
+Next, we need to start our application and connect to the debugger. Start the application by running `npm start`. Once the application is running, open it with either an emulator or the Expo mobile app. Inside the emulator or the Expo mobile app, open the developer menu by following the instructions in the Expo's documentation. From the developer menu, select *Debug remote JS* to connect to the debugger. Now, you should be able to see the application's component tree in the debugger.
+
+The debugger's *Console* tab displays the application's logs. Like in the browser's development tools, error messages and messages logged with the `console.log` method are displayed there. Try adding a message with the `console.log` method in the *App.js* file and see that it is displayed in the debugger.
+
+You can use the debugger to inspect the component's state and props as well as *change* them. Try finding the `Text` component rendered by the `App` component using the debugger. You can either use the search or go through the component tree. Once you have found the `Text` component in the tree, click it, and change the value of the `children` prop. The change should be automatically visible in the application's preview.
+
+For more useful React Native application debugging tools, head to Expo's debugging documentation:
+https://docs.expo.dev/workflow/debugging/

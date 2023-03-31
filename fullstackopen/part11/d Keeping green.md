@@ -99,3 +99,30 @@ For example, when we have a project that uses hash-based artifact builds for tes
 
 In the case above, the software we release is tested because the CI system makes sure that tests are run on the code it is about to tag. It would not be incorrect to say that the project uses semantic versioning and simply ignore that the CI system tests individual developer branches/PRs with a hash-based naming system. We do this because the version we care about (the one that is released) is given a semantic version.
 
+## A note about using third party actions
+
+When using a third party action such as *github-tag-action*, it might be a good idea to specify the used version with a hash instead of using a version number. The reason for this is that the version number, that is implemented with a Git tag can in principle be *moved*. So today's version 1.61.0 might be a different code than next week's 1.61.0.
+
+However, the code in a commit with a particular hash does not change in any circumstances, so if we want to be 100% sure about the code we use, it is safest to use the hash.
+
+The version 1.61.0 of the above action correspons to the commit with hash `8c8163ef62cf9c4677c8e800f36270af27930f42`, so we should change our configuration as follows:
+```
+- name: Bump version and push tag
+  uses: anothrNick/github-tag-action@8c8163ef62cf9c4677c8e800f36270af27930f42
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+When we use actions provided by GitHub, we trust them not to mess with version tags and to thoroughly test their code.
+
+In the case of third-party actions, the code might end up being buggy or even malicious. Even when the author of the open-source code does not have the intention of doing something bad, they might accidentally expose their credentials or some other problem could happen.
+
+By pointing to the hash of a specific commit, we can be sure that the code we use when running the workflow will not change, because changing the underlying commit and its contents would also change the hash.
+
+## Keep the main branch protected
+
+GitHub allows you to set up protected branches. It is important to protect your most important branch that should never be broken: *master/main*. In repository settings, you can choose between several levels of protection. We will not go over all of the protection options, you can learn more about them in the GitHub documentation. Requiring pull request approval when merging into the main branch is one of the options we mentioned earlier.
+
+From a CI point of view, the most important protection is requiring status checks to pass before a PR can be merged into the main branch. This means that if you have set up GitHub actions to run, e.g. linting and testing tasks, then until all the lint errors are fixed and all the tests pass, the PR cannot be merged. Because you are the administrator for your repository, you will see an option to override the restriction. However, non-administrators will not have this option.
+
+To set up protection for your main branch, navigate to repository "Settings" from the top menu inside the repository. In the left-side menu, select "Branches". Click "Add rule" next to "Branch protection rules". Type a branch name pattern (master or main, for example) and select the protection you would want to set up. At least "Require status checks to pass before merging" is necessary for you to fully utilize the power of GitHub Actions. Under it, you should also check "Require branches to be up to date before merging" and select all of the status checks that should pass before a PR can be merged.
